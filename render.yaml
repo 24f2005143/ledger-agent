@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: ledger-agent
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: UPSTREAM_EMAIL
+        value: 24f2005143@ds.study.iitm.ac.in
+      - key: UPSTREAM_QUIZ_SIGN
+        sync: false
+      - key: UPSTREAM_QUESTION_ID
+        value: q-ledger-agent-server
+      - key: CACHE_SECONDS
+        value: "300"
+      - key: UPSTREAM_TIMEOUT
+        value: "2.5"
