@@ -572,6 +572,23 @@ def debug_schema():
     }
 
 @app.get("/debug/revenue-check")
+def debug_revenue_check(region: str = "north", year: int = 2026, month: int = 1):
+    """Compare `amount` vs `unit_price * qty` for paid orders in a region/month."""
+    if not cache["loaded"]:
+        load_data()
+
+    matching = []
+    for row in cache["orders"]:
+        dt = parse_datetime(row.get("created_at"))
+        if (
+            str(row.get("region", "")).strip().lower() == region.lower()
+            and dt is not None
+            and dt.year == year
+            and dt.month == month
+            and str(row.get("status", "")).strip().lower() == "paid"
+        ):
+            matching.append(row)
+
     sample_orders = [
         {
             "id": row.get("id"),
@@ -585,23 +602,6 @@ def debug_schema():
         }
         for row in matching[:10]
     ]
-def debug_revenue_check():
-    if not cache["loaded"]:
-        load_data()
-
-    matching = []
-
-    for row in cache["orders"]:
-        dt = parse_datetime(row.get("created_at"))
-
-        if (
-            str(row.get("region", "")).strip().lower() == "north"
-            and dt is not None
-            and dt.year == 2026
-            and dt.month == 1
-            and str(row.get("status", "")).strip().lower() == "paid"
-        ):
-            matching.append(row)
 
     amount_by_currency = {}
     calculated_by_currency = {}
@@ -610,44 +610,25 @@ def debug_revenue_check():
 
     for row in matching:
         currency = str(row.get("currency", "")).strip().upper()
-
         try:
             amount = float(row.get("amount") or 0)
-            calculated = (
-                float(row.get("unit_price") or 0)
-                * float(row.get("qty") or 0)
-            )
-
-            amount_by_currency[currency] = (
-                amount_by_currency.get(currency, 0) + amount
-            )
+            calculated = float(row.get("unit_price") or 0) * float(row.get("qty") or 0)
+            amount_by_currency[currency] = amount_by_currency.get(currency, 0) + amount
             calculated_by_currency[currency] = (
                 calculated_by_currency.get(currency, 0) + calculated
             )
-
-            converted_amount_total += convert_amount(
-                amount, currency, "USD"
-            )
-            converted_calculated_total += convert_amount(
-                calculated, currency, "USD"
-            )
+            converted_amount_total += convert_amount(amount, currency, "USD")
+            converted_calculated_total += convert_amount(calculated, currency, "USD")
         except (ValueError, TypeError, KeyError) as exc:
-            return {
-                "error": str(exc),
-                "currency": currency,
-                "sample_orders": sample_orders,
-            }
+            return {"error": str(exc), "currency": currency, "sample_orders": sample_orders}
 
     return {
         "matching_paid_orders": len(matching),
-        "amount_by_currency": {
-            k: round(v, 2) for k, v in amount_by_currency.items()
-        },
+        "amount_by_currency": {k: round(v, 2) for k, v in amount_by_currency.items()},
         "unit_price_times_qty_by_currency": {
             k: round(v, 2) for k, v in calculated_by_currency.items()
         },
         "amount_converted_to_usd": round(converted_amount_total, 2),
-        "unit_price_times_qty_converted_to_usd": round(
-            converted_calculated_total, 2
-        ),
+        "unit_price_times_qty_converted_to_usd": round(converted_calculated_total, 2),
+        "sample_orders": sample_orders,
     }
