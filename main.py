@@ -1,4 +1,3 @@
-
 import os
 import re
 import time
@@ -100,7 +99,7 @@ def fetch_all_paginated_data(path):
         )
 
         if isinstance(data, list):
-            result.extend(data)
+            result.extend(row for row in data if isinstance(row, dict))
             break
 
         if not isinstance(data, dict):
@@ -225,9 +224,7 @@ def load_data(force=False):
         for currency, value in raw_rates.items():
             rate = float(value)
             if rate <= 0:
-                raise RuntimeError(
-                    f"Invalid rate for {currency}."
-                )
+                raise RuntimeError(f"Invalid rate for {currency}.")
             rates[str(currency).upper()] = rate
 
         if "USD" not in rates:
@@ -261,9 +258,7 @@ def startup_event():
 def find_month_year(question):
     q = question.lower()
 
-    match = re.search(
-        r"\b(20\d{2})-(0?[1-9]|1[0-2])\b", q
-    )
+    match = re.search(r"\b(20\d{2})-(0?[1-9]|1[0-2])\b", q)
     if match:
         return int(match.group(1)), int(match.group(2))
 
@@ -272,15 +267,11 @@ def find_month_year(question):
         for name in sorted(MONTHS, key=len, reverse=True)
     )
 
-    match = re.search(
-        rf"\b({month_pattern})\s+(20\d{{2}})\b", q
-    )
+    match = re.search(rf"\b({month_pattern})\s+(20\d{{2}})\b", q)
     if match:
         return int(match.group(2)), MONTHS[match.group(1)]
 
-    match = re.search(
-        rf"\b(20\d{{2}})\s+({month_pattern})\b", q
-    )
+    match = re.search(rf"\b(20\d{{2}})\s+({month_pattern})\b", q)
     if match:
         return int(match.group(1)), MONTHS[match.group(2)]
 
@@ -336,7 +327,7 @@ def filter_orders(question):
         if re.search(rf"\b{region}\b", q):
             orders = [
                 row for row in orders
-                if str(row.get("region", "")).lower() == region
+                if str(row.get("region", "")).strip().lower() == region
             ]
             break
 
@@ -356,25 +347,23 @@ def filter_orders(question):
             ]
             break
 
-    # Customer ID
+    # Customer ID, e.g. C1234
     match = re.search(r"\bc\d{3,}\b", q, re.I)
     if match:
         customer_id = match.group(0).upper()
         orders = [
             row for row in orders
-            if str(row.get("customer", "")).upper() == customer_id
+            if str(row.get("customer", "")).strip().upper() == customer_id
         ]
 
-    # Date filters use the dataset's created_at field.
+    # Date filters use created_at, as specified by the question wording.
     month_year = find_month_year(q)
-
     if month_year:
         year, month = month_year
         orders = [
             row for row in orders
             if (
-                (dt := parse_datetime(row.get("created_at")))
-                is not None
+                (dt := parse_datetime(row.get("created_at"))) is not None
                 and dt.year == year
                 and dt.month == month
             )
@@ -384,48 +373,68 @@ def filter_orders(question):
         orders = [
             row for row in orders
             if (
-                (dt := parse_datetime(row.get("created_at")))
-                is not None
+                (dt := parse_datetime(row.get("created_at"))) is not None
                 and dt.year == year
             )
         ]
 
-    # Explicit status filters.
+    # Explicit status filters. "Refunded" is checked before other statuses.
     if re.search(r"\b(refund|refunded|refunds)\b", q):
         orders = [
             row for row in orders
-            if str(row.get("status", "")).lower() == "refunded"
+            if str(row.get("status", "")).strip().lower() == "refunded"
         ]
     elif re.search(r"\b(cancelled|canceled|cancellation)\b", q):
         orders = [
             row for row in orders
-            if str(row.get("status", "")).lower()
+            if str(row.get("status", "")).strip().lower()
             in {"cancelled", "canceled"}
         ]
     elif re.search(r"\b(pending|unpaid)\b", q):
         orders = [
             row for row in orders
-            if str(row.get("status", "")).lower()
+            if str(row.get("status", "")).strip().lower()
             in {"pending", "unpaid"}
         ]
-    
     elif re.search(r"\bpaid\b", q) and not re.search(r"\bunpaid\b", q):
         orders = [
             row for row in orders
             if str(row.get("status", "")).strip().lower() == "paid"
         ]
-
     elif any(
-        word in q
-        for word in ("revenue", "sales", "earn", "earned", "income")
+        word in q for word in ("revenue", "sales", "earn", "earned", "income")
     ):
-        # Revenue includes paid orders only in this implementation.
         orders = [
             row for row in orders
-            if str(row.get("status", "")).lower() == "paid"
+            if str(row.get("status", "")).strip().lower() == "paid"
         ]
 
     return orders
+
+
+def is_count_question(question):
+    """Detect count requests before checking for amount-related words."""
+    q = question.lower().strip()
+
+    # Explicit distinct/unique customer requests.
+    if re.search(r"\b(distinct|unique|different)\s+customers?\b", q):
+        return True
+
+    # Questions phrased as "Count the ... orders", "How many orders ...",
+    # "number of refunded orders", etc.
+    count_intent = (
+        re.search(r"\bcount\b", q)
+        or re.search(r"\bhow many\b", q)
+        or re.search(r"\bnumber of\b", q)
+        or re.search(r"\bquantity of\b", q)
+    )
+    count_subject = (
+        re.search(r"\borders?\b", q)
+        or re.search(r"\bcustomers?\b", q)
+        or re.search(r"\btransactions?\b", q)
+        or re.search(r"\brecords?\b", q)
+    )
+    return bool(count_intent and count_subject)
 
 
 def answer_question_text(question):
@@ -436,13 +445,8 @@ def answer_question_text(question):
 
     orders = filter_orders(q)
 
-    
-    # Count distinct customers
-    if (
-        "distinct customer" in q
-        or "unique customer" in q
-        or "different customers" in q
-    ):
+    # Count distinct customers (after applying all region/date/status/product filters).
+    if re.search(r"\b(distinct|unique|different)\s+customers?\b", q):
         customers = {
             str(row.get("customer", "")).strip().upper()
             for row in orders
@@ -451,24 +455,16 @@ def answer_question_text(question):
         }
         return len(customers)
 
-
-    if any(
-        phrase in q
-        for phrase in (
-            "how many orders",
-            "number of orders",
-            "count of orders",
-            "count orders",
-        )
-    ):
+    # Handle all count questions before amount logic. This prevents words such
+    # as "refund/refunded" from accidentally triggering an amount total.
+    if is_count_question(q):
         return len(orders)
 
     is_amount_question = any(
         word in q
         for word in (
             "revenue", "sales", "earn", "earned", "income",
-            "refund", "refunded", "how much", "total amount",
-            "total value",
+            "refund", "refunded", "how much", "total amount", "total value",
         )
     )
 
@@ -571,7 +567,6 @@ def debug_schema():
                 "fields": sorted(cache["rates"].keys()),
             },
         },
-        # Rates are included to verify the conversion inputs.
         "usd_per_unit": cache["rates"],
         "last_error": cache["last_error"],
     }
