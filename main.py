@@ -572,6 +572,19 @@ def debug_schema():
     }
 
 @app.get("/debug/revenue-check")
+    sample_orders = [
+        {
+            "id": row.get("id"),
+            "created_at": row.get("created_at"),
+            "region": row.get("region"),
+            "status": row.get("status"),
+            "currency": row.get("currency"),
+            "amount": row.get("amount"),
+            "unit_price": row.get("unit_price"),
+            "qty": row.get("qty"),
+        }
+        for row in matching[:10]
+    ]
 def debug_revenue_check():
     if not cache["loaded"]:
         load_data()
