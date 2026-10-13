@@ -318,6 +318,20 @@ def convert_amount(amount, source_currency, target_currency):
     return usd_amount / rates[target]
 
 
+def is_refunded(row):
+    status = str(row.get("status", "")).strip().lower()
+    if "refund" in status:
+        return True
+    for key in ("refunded", "is_refunded"):
+        if row.get(key) in (True, 1, "true", "True", "yes"):
+            return True
+    for key in ("refund_amount", "refunded_amount", "refunded_at", "refund_date"):
+        value = row.get(key)
+        if value not in (None, "", 0, 0.0, "0", False):
+            return True
+    return False
+
+
 def filter_orders(question):
     q = question.lower()
     orders = list(cache["orders"])
@@ -380,10 +394,7 @@ def filter_orders(question):
 
     # Explicit status filters. "Refunded" is checked before other statuses.
     if re.search(r"\b(refund|refunded|refunds)\b", q):
-        orders = [
-            row for row in orders
-            if str(row.get("status", "")).strip().lower() == "refunded"
-        ]
+        orders = [row for row in orders if is_refunded(row)]
     elif re.search(r"\b(cancelled|canceled|cancellation)\b", q):
         orders = [
             row for row in orders
@@ -732,4 +743,55 @@ def debug_revenue_check(region: str = "north", year: int = 2026, month: int = 1)
         "amount_converted_to_usd": round(converted_amount_total, 2),
         "unit_price_times_qty_converted_to_usd": round(converted_calculated_total, 2),
         "sample_orders": sample_orders,
+    }
+
+
+@app.get("/debug/root")
+def debug_root():
+    """Raw upstream root response: shows every resource the API advertises."""
+    return upstream_get(path="/")
+
+
+@app.get("/debug/profile")
+def debug_profile(region: str = "east", year: int = 2026, month: int = 1):
+    """Diagnose how 'refunded <region> orders in <month>' can be counted."""
+    if not cache["loaded"]:
+        load_data()
+    rows = cache["orders"]
+
+    statuses = {}
+    samples = {}
+    for r in rows:
+        s = str(r.get("status"))
+        statuses[s] = statuses.get(s, 0) + 1
+        samples.setdefault(s, r)
+
+    def in_period(r, field):
+        dt = parse_datetime(r.get(field))
+        return dt is not None and dt.year == year and dt.month == month
+
+    in_region = [r for r in rows if str(r.get("region", "")).strip().lower() == region]
+    date_fields = sorted({k for r in rows for k in r if k.endswith("_at") or "date" in k})
+    regions = {}
+    for r in rows:
+        k = repr(r.get("region"))
+        regions[k] = regions.get(k, 0) + 1
+
+    return {
+        "orders_after_dedup": len(rows),
+        "distinct_status_values": statuses,
+        "distinct_region_values": regions,
+        "date_fields": date_fields,
+        "all_fields": sorted({k for r in rows for k in r}),
+        "sample_row_per_status": samples,
+        "count_status_eq_refunded_by_date_field": {
+            f: sum(1 for r in in_region if in_period(r, f)
+                   and str(r.get("status", "")).strip().lower() == "refunded")
+            for f in date_fields
+        },
+        "count_is_refunded_by_date_field": {
+            f: sum(1 for r in in_region if in_period(r, f) and is_refunded(r))
+            for f in date_fields
+        },
+        "raw_rows_before_dedup_hint": "call /refresh then compare orders count with upstream total",
     }
