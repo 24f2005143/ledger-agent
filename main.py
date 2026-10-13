@@ -437,6 +437,68 @@ def is_count_question(question):
     return bool(count_intent and count_subject)
 
 
+
+DIMENSIONS = {
+    "product": "product",
+    "customer": "customer",
+    "region": "region",
+}
+
+
+def ranking_request(q):
+    """Detect 'which product/customer/region has the most/least ...' questions."""
+    m = re.search(
+        r"\b(which|what|who)\b[^?]*?\b(product|customer|region)s?\b", q
+    )
+    if not m:
+        return None
+    high = re.search(
+        r"\b(most|highest|top|best|largest|biggest|greatest|max|maximum|"
+        r"leading|more)\b", q)
+    low = re.search(
+        r"\b(least|lowest|fewest|smallest|worst|min|minimum|less|bottom)\b", q)
+    if not (high or low):
+        return None
+    return DIMENSIONS[m.group(2)], bool(low and not high)
+
+
+def rank_orders(q, orders, dimension, ascending):
+    """Group orders by dimension and return the top (or bottom) name."""
+    wants_money = any(w in q for w in ("usd", "revenue", "amount", "value", "$",
+                                       "sales", "earn", "income", "spent", "spend"))
+    wants_units = bool(re.search(r"\b(units|quantity|qty|items)\b", q))
+    wants_count = bool(re.search(r"\b(orders|transactions|purchases|popular)\b", q)) \
+        or ("refund" in q and not wants_money)
+
+    totals = {}
+    for row in orders:
+        name = str(row.get(dimension, "")).strip()
+        if not name:
+            continue
+        if wants_units and not wants_money:
+            value = float(row.get("qty") or row.get("quantity") or 0)
+        elif wants_count and not wants_money:
+            value = 1.0
+        else:
+            amount = row.get("amount")
+            if amount is None:
+                continue
+            value = convert_amount(amount, row.get("currency"), requested_currency(q))
+        totals[name] = totals.get(name, 0.0) + value
+
+    if not totals:
+        raise HTTPException(status_code=422, detail="No matching orders.")
+
+    # Round to cents so float noise cannot decide; ties -> alphabetical.
+    ordered = sorted(totals.items(), key=lambda kv: (round(kv[1], 2), kv[0]))
+    if ascending:
+        best = ordered[0]
+    else:
+        top = ordered[-1][1]
+        best = next(kv for kv in ordered if round(kv[1], 2) == round(top, 2))
+    return best[0]
+
+
 def answer_question_text(question):
     q = question.lower().strip()
 
@@ -444,6 +506,12 @@ def answer_question_text(question):
         load_data()
 
     orders = filter_orders(q)
+
+    # "Which product/customer/region ... most/least ..." -> return a name.
+    ranking = ranking_request(q)
+    if ranking:
+        dimension, ascending = ranking
+        return rank_orders(q, orders, dimension, ascending)
 
     # Count distinct customers (after applying all region/date/status/product filters).
     if re.search(r"\b(distinct|unique|different)\s+customers?\b", q):
