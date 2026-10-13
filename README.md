@@ -1,32 +1,48 @@
 # Acme Appliances Ledger Agent
 
-A FastAPI POST endpoint that attempts to discover the user's private, undocumented ledger API through the IITM exam `questionData` gateway and answer common questions about revenue, refunds, products and customers.
+FastAPI endpoint for the assigned, undocumented Acme Appliances order-ledger API.
 
-## Environment
+## Render environment variables
 
-Set these environment variables on your host:
+Set these in **Render → your service → Environment**:
 
-- `UPSTREAM_EMAIL=24f2005143@ds.study.iitm.ac.in`
-- `UPSTREAM_QUIZ_SIGN=<the decoded quizSign value from your assigned URL>`
-- `UPSTREAM_QUESTION_ID=q-ledger-agent-server`
-- `CACHE_SECONDS=300` (optional)
+- `UPSTREAM_EMAIL`: your assigned email
+- `UPSTREAM_QUIZ_SIGN`: the `quizSign` value from your assigned `questionData` URL. The application accepts either the encoded value (with `%2F`, `%2B`, `%3D`, etc.) or the decoded value.
+- `UPSTREAM_QUESTION_ID`: `q-ledger-agent-server`
+- `CACHE_SECONDS`: `300`
+- `UPSTREAM_TIMEOUT`: `8`
 
-Do not commit the quiz signature to a public repository. Render's Blueprint asks for `UPSTREAM_QUIZ_SIGN` during the initial setup because `sync: false` is set.
+Do not commit your quiz signature to GitHub or share it publicly.
 
-## Run locally
+## Local run (Windows PowerShell)
 
-```bash
-python -m venv .venv
-# Windows PowerShell: .venv\Scripts\Activate.ps1
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-$env:UPSTREAM_QUIZ_SIGN="YOUR_DECODED_QUIZ_SIGN"
+$env:UPSTREAM_EMAIL = "YOUR_ASSIGNED_EMAIL"
+$env:UPSTREAM_QUIZ_SIGN = "YOUR_ASSIGNED_QUIZ_SIGN"
+$env:UPSTREAM_QUESTION_ID = "q-ledger-agent-server"
 uvicorn main:app --reload --port 8000
 ```
 
-POST JSON to `http://127.0.0.1:8000/`:
+Check data loading:
 
-```json
-{"question":"What was the total revenue in USD from the North region in March 2026?"}
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/health
+Invoke-RestMethod http://127.0.0.1:8000/debug/schema
 ```
 
-Inspect `/health` and `/debug/schema` after the service starts to confirm which API collections were discovered.
+Test a question:
+
+```powershell
+$body = @{ question = "What was the total revenue in USD from the North region in March 2026?" } | ConvertTo-Json
+Invoke-RestMethod -Uri http://127.0.0.1:8000/ -Method Post -ContentType "application/json" -Body $body
+```
+
+## Notes
+
+- The app discovers resources from the upstream root response and follows advertised pagination.
+- It keeps the latest `updated_at` version of a repeated order ID.
+- Revenue sums only orders whose current status is `paid`.
+- `/health` reports whether the upstream signature is set and whether records have loaded. `/debug/schema` reports collection sizes and field names without exposing record contents.

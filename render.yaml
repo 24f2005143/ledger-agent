@@ -16,4 +16,4 @@ services:
       - key: CACHE_SECONDS
         value: "300"
       - key: UPSTREAM_TIMEOUT
-        value: "2.5"
+        value: "8"
