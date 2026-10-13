@@ -416,6 +416,12 @@ def is_count_question(question):
     """Detect count requests before checking for amount-related words."""
     q = question.lower().strip()
 
+    # "how many US dollars ..." asks for money, not a count of records.
+    if re.search(
+        r"\bhow many\s+(us\s+|american\s+)?(dollars?|usd|euros?|eur|rupees?|inr)\b", q
+    ):
+        return False
+
     # Explicit distinct/unique customer requests.
     if re.search(r"\b(distinct|unique|different)\s+customers?\b", q):
         return True
@@ -470,6 +476,8 @@ def rank_orders(q, orders, dimension, ascending):
     wants_count = bool(re.search(r"\b(orders|transactions|purchases|popular)\b", q)) \
         or ("refund" in q and not wants_money)
 
+    average = is_average_question(q)
+    counts = {}
     totals = {}
     for row in orders:
         name = str(row.get(dimension, "")).strip()
@@ -485,6 +493,10 @@ def rank_orders(q, orders, dimension, ascending):
                 continue
             value = convert_amount(amount, row.get("currency"), requested_currency(q))
         totals[name] = totals.get(name, 0.0) + value
+        counts[name] = counts.get(name, 0) + 1
+
+    if average:
+        totals = {k: v / counts[k] for k, v in totals.items()}
 
     if not totals:
         raise HTTPException(status_code=422, detail="No matching orders.")
@@ -497,6 +509,23 @@ def rank_orders(q, orders, dimension, ascending):
         top = ordered[-1][1]
         best = next(kv for kv in ordered if round(kv[1], 2) == round(top, 2))
     return best[0]
+
+
+def is_average_question(q):
+    return bool(re.search(r"\b(average|avg|mean|on average|typical)\b", q))
+
+
+def average_answer(q, orders):
+    target = requested_currency(q)
+    values = []
+    for row in orders:
+        amount = row.get("amount")
+        if amount is None:
+            continue
+        values.append(convert_amount(amount, row.get("currency"), target))
+    if not values:
+        raise HTTPException(status_code=422, detail="No matching orders.")
+    return round(sum(values) / len(values), 2)
 
 
 def answer_question_text(question):
@@ -512,6 +541,10 @@ def answer_question_text(question):
     if ranking:
         dimension, ascending = ranking
         return rank_orders(q, orders, dimension, ascending)
+
+    # Averages: mean USD value of the matching orders.
+    if is_average_question(q):
+        return average_answer(q, orders)
 
     # Count distinct customers (after applying all region/date/status/product filters).
     if re.search(r"\b(distinct|unique|different)\s+customers?\b", q):
