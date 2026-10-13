@@ -635,6 +635,7 @@ def debug_revenue_check():
             return {
                 "error": str(exc),
                 "currency": currency,
+                "sample_orders": sample_orders,
             }
 
     return {
