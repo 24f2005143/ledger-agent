@@ -570,3 +570,70 @@ def debug_schema():
         "usd_per_unit": cache["rates"],
         "last_error": cache["last_error"],
     }
+
+@app.get("/debug/revenue-check")
+def debug_revenue_check():
+    if not cache["loaded"]:
+        load_data()
+
+    matching = []
+
+    for row in cache["orders"]:
+        dt = parse_datetime(row.get("created_at"))
+
+        if (
+            str(row.get("region", "")).strip().lower() == "north"
+            and dt is not None
+            and dt.year == 2026
+            and dt.month == 1
+            and str(row.get("status", "")).strip().lower() == "paid"
+        ):
+            matching.append(row)
+
+    amount_by_currency = {}
+    calculated_by_currency = {}
+    converted_amount_total = 0.0
+    converted_calculated_total = 0.0
+
+    for row in matching:
+        currency = str(row.get("currency", "")).strip().upper()
+
+        try:
+            amount = float(row.get("amount") or 0)
+            calculated = (
+                float(row.get("unit_price") or 0)
+                * float(row.get("qty") or 0)
+            )
+
+            amount_by_currency[currency] = (
+                amount_by_currency.get(currency, 0) + amount
+            )
+            calculated_by_currency[currency] = (
+                calculated_by_currency.get(currency, 0) + calculated
+            )
+
+            converted_amount_total += convert_amount(
+                amount, currency, "USD"
+            )
+            converted_calculated_total += convert_amount(
+                calculated, currency, "USD"
+            )
+        except (ValueError, TypeError, KeyError) as exc:
+            return {
+                "error": str(exc),
+                "currency": currency,
+            }
+
+    return {
+        "matching_paid_orders": len(matching),
+        "amount_by_currency": {
+            k: round(v, 2) for k, v in amount_by_currency.items()
+        },
+        "unit_price_times_qty_by_currency": {
+            k: round(v, 2) for k, v in calculated_by_currency.items()
+        },
+        "amount_converted_to_usd": round(converted_amount_total, 2),
+        "unit_price_times_qty_converted_to_usd": round(
+            converted_calculated_total, 2
+        ),
+    }
