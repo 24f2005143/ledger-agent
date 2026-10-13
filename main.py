@@ -408,6 +408,13 @@ def filter_orders(question):
             if str(row.get("status", "")).lower()
             in {"pending", "unpaid"}
         ]
+    
+    elif re.search(r"\bpaid\b", q) and not re.search(r"\bunpaid\b", q):
+        orders = [
+            row for row in orders
+            if str(row.get("status", "")).strip().lower() == "paid"
+        ]
+
     elif any(
         word in q
         for word in ("revenue", "sales", "earn", "earned", "income")
@@ -428,6 +435,22 @@ def answer_question_text(question):
         load_data()
 
     orders = filter_orders(q)
+
+    
+    # Count distinct customers
+    if (
+        "distinct customer" in q
+        or "unique customer" in q
+        or "different customers" in q
+    ):
+        customers = {
+            str(row.get("customer", "")).strip().upper()
+            for row in orders
+            if row.get("customer") is not None
+            and str(row.get("customer", "")).strip()
+        }
+        return len(customers)
+
 
     if any(
         phrase in q
